@@ -62,7 +62,8 @@ struct switch_fwd fwdtab[MAX_FWD_LENGTH];
 
 //Initially set all valid id's on forwarding table to 0 (max table size is 100)
 for (int i=0; i<MAX_FWD_LENGTH; i++){
-	fwdtab[i].valid = 0;}
+	fwdtab[i].valid = 0;
+}
 
 
 //Sasaki code from host.c
@@ -169,7 +170,6 @@ while(1){
 	}
 
 }
-
 }
 
 
