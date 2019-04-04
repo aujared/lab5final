@@ -14,6 +14,7 @@
 #include "net.h"
 #include "man.h"
 #include "host.h"
+#include "switch.h"
 #include "packet.h"
 
 #define MAX_FILE_BUFFER 1000
@@ -49,8 +50,8 @@ f->occ = 0;
 f->name_length = 0;
 }
 
-/* 
- * Get the file name in the file buffer and store it in name 
+/*
+ * Get the file name in the file buffer and store it in name
  * Terminate the string in name with tne null character
  */
 void file_buf_get_name(struct file_buf *f, char name[])
@@ -94,7 +95,7 @@ return(i);
 }
 
 /*
- *  Remove bytes from the file buffer and store it in string[] 
+ *  Remove bytes from the file buffer and store it in string[]
  *  The number of bytes is length.
  */
 int file_buf_remove(struct file_buf *f, char string[], int length)
@@ -168,18 +169,21 @@ write(port->send_fd, reply_msg, n);
 /* Add a job to the job queue */
 void job_q_add(struct job_queue *j_q, struct host_job *j)
 {
+//printf("\t\tadd: j=%p\n", j);
+
+j->next = NULL;
 if (j_q->head == NULL ) {
 	j_q->head = j;
 	j_q->tail = j;
 	j_q->occ = 1;
-	j->next = NULL;
 }
 else {
 	(j_q->tail)->next = j;
-	j->next = NULL;
 	j_q->tail = j;
 	j_q->occ++;
 }
+
+//printf("\t\tadd: end\n");
 }
 
 /* Remove job from the job queue, and return pointer to the job*/
@@ -187,10 +191,19 @@ struct host_job *job_q_remove(struct job_queue *j_q)
 {
 struct host_job *j;
 
-if (j_q->occ == 0) return(NULL);
+if (j_q->occ == 0)
+{
+	//printf("\t\trem: NULL\n");
+	return(NULL);
+}
 j = j_q->head;
+//printf("\t\trem: j=%p\n", j);
 j_q->head = (j_q->head)->next;
+//printf("\t\trem: j=%p *\n", j_q->head);
 j_q->occ--;
+
+//printf("\t\trem: END\n");
+
 return(j);
 }
 
@@ -208,7 +221,7 @@ return j_q->occ;
 }
 
 /*
- *  Main 
+ *  Main
  */
 
 void host_main(int host_id)
@@ -232,7 +245,7 @@ int ping_reply_received;
 int i, k, n;
 int dst;
 char name[MAX_FILE_NAME];
-char string[PKT_PAYLOAD_MAX+1]; 
+char string[PKT_PAYLOAD_MAX+1];
 
 FILE *fp;
 
@@ -245,14 +258,14 @@ struct host_job *new_job2;
 
 struct job_queue job_q;
 
-struct file_buf f_buf_upload;  
-struct file_buf f_buf_download; 
+struct file_buf f_buf_upload;
+struct file_buf f_buf_download;
 
 file_buf_init(&f_buf_upload);
 file_buf_init(&f_buf_download);
 
 /*
- * Initialize pipes 
+ * Initialize pipes
  * Get link port to the manager
  */
 
@@ -270,7 +283,7 @@ for (p=node_port_list; p!=NULL; p=p->next) {
 	node_port_num++;
 }
 	/* Create memory space for the array */
-node_port = (struct net_port **) 
+node_port = (struct net_port **)
 	malloc(node_port_num*sizeof(struct net_port *));
 
 	/* Load ports into the array */
@@ -278,10 +291,12 @@ p = node_port_list;
 for (k = 0; k < node_port_num; k++) {
 	node_port[k] = p;
 	p = p->next;
-}	
+}
 
 /* Initialize the job queue */
 job_q_init(&job_q);
+
+//printf("\th%d: online\n", host_id);
 
 while(1) {
 	/* Execute command from manager, if any */
@@ -294,11 +309,11 @@ while(1) {
 		switch(man_cmd) {
 			case 's':
 				reply_display_host_state(man_port,
-					dir, 
+					dir,
 					dir_valid,
 					host_id);
-				break;	
-			
+				break;
+
 			case 'm':
 				dir_valid = 1;
 				for (i=0; man_msg[i] != '\0'; i++) {
@@ -310,19 +325,19 @@ while(1) {
 			case 'p': // Sending ping request
 				// Create new ping request packet
 				sscanf(man_msg, "%d", &dst);
-				new_packet = (struct packet *) 
-						malloc(sizeof(struct packet));	
+				new_packet = (struct packet *)
+						malloc(sizeof(struct packet));
 				new_packet->src = (char) host_id;
 				new_packet->dst = (char) dst;
 				new_packet->type = (char) PKT_PING_REQ;
 				new_packet->length = 0;
-				new_job = (struct host_job *) 
+				new_job = (struct host_job *)
 						malloc(sizeof(struct host_job));
 				new_job->packet = new_packet;
 				new_job->type = JOB_SEND_PKT_ALL_PORTS;
 				job_q_add(&job_q, new_job);
 
-				new_job2 = (struct host_job *) 
+				new_job2 = (struct host_job *)
 						malloc(sizeof(struct host_job));
 				ping_reply_received = 0;
 				new_job2->type = JOB_PING_WAIT_FOR_REPLY;
@@ -333,18 +348,18 @@ while(1) {
 
 			case 'u': /* Upload a file to a host */
 				sscanf(man_msg, "%d %s", &dst, name);
-				new_job = (struct host_job *) 
+				new_job = (struct host_job *)
 						malloc(sizeof(struct host_job));
 				new_job->type = JOB_FILE_UPLOAD_SEND;
-				new_job->file_upload_dst = dst;	
+				new_job->file_upload_dst = dst;
 				for (i=0; name[i] != '\0'; i++) {
 					new_job->fname_upload[i] = name[i];
 				}
 				new_job->fname_upload[i] = '\0';
 				job_q_add(&job_q, new_job);
-					
+
 				break;
-			case 'd': //Download a file from a host
+			case 'd': /*Request a downlaod from another host */
 				sscanf(man_msg, "%d %s", &dst, name);
 				/*create packet*/
 				new_packet = (struct packet *)
@@ -370,7 +385,7 @@ while(1) {
 			;
 		}
 	}
-	
+
 	/*
 	 * Get packets from incoming links and translate to jobs
   	 * Put jobs in job queue
@@ -382,7 +397,7 @@ while(1) {
 		n = packet_recv(node_port[k], in_packet);
 
 		if ((n > 0) && ((int) in_packet->dst == host_id)) {
-			new_job = (struct host_job *) 
+			new_job = (struct host_job *)
 				malloc(sizeof(struct host_job));
 			new_job->in_port_index = k;
 			new_job->packet = in_packet;
@@ -390,11 +405,11 @@ while(1) {
 			switch(in_packet->type) {
 				/* Consider the packet type */
 
-				/* 
-				 * The next two packet types are 
+				/*
+				 * The next two packet types are
 				 * the ping request and ping reply
 				 */
-				case (char) PKT_PING_REQ: 
+				case (char) PKT_PING_REQ:
 					new_job->type = JOB_PING_SEND_REPLY;
 					job_q_add(&job_q, new_job);
 					break;
@@ -405,7 +420,7 @@ while(1) {
 					free(new_job);
 					break;
 
-				/* 
+				/*
 				 * The next two packet types
 				 * are for the upload file operation.
 				 *
@@ -417,19 +432,15 @@ while(1) {
 				 * which carries the content of the file
 				 * in its payload
 				 */
-		
+
 				case (char) PKT_FILE_UPLOAD_START:
-					new_job->type 
+					new_job->type
 						= JOB_FILE_UPLOAD_RECV_START;
 					job_q_add(&job_q, new_job);
 					break;
-				case (char) PKT_FILE_UPLOAD_CONTINUE:
-					new_job->type 
-						= JOB_FILE_UPLOAD_CONTINUE;
-					job_q_add(&job_q, new_job);
-					break;
+
 				case (char) PKT_FILE_UPLOAD_END:
-					new_job->type 
+					new_job->type
 						= JOB_FILE_UPLOAD_RECV_END;
 					job_q_add(&job_q, new_job);
 					break;
@@ -442,6 +453,7 @@ while(1) {
 					job_q_add(&job_q, new_job);
 					free(in_packet);
 					break;
+
 				default:
 					free(in_packet);
 					free(new_job);
@@ -458,15 +470,19 @@ while(1) {
 
 	if (job_q_num(&job_q) > 0) {
 
+		//printf("\th%d: jobs available\n", host_id);
+
 		/* Get a new job from the job queue */
 		new_job = job_q_remove(&job_q);
 
+		//printf("\th%d: got a job\n", host_id);
 
 		/* Send packet on all ports */
 		switch(new_job->type) {
 
-		/* Send packets on all ports */	
+		/* Send packets on all ports */
 		case JOB_SEND_PKT_ALL_PORTS:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "send blast");
 			for (k=0; k<node_port_num; k++) {
 				packet_send(node_port[k], new_job->packet);
 			}
@@ -476,10 +492,11 @@ while(1) {
 
 		/* The next three jobs deal with the pinging process */
 		case JOB_PING_SEND_REPLY:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "ping reply");
 			/* Send a ping reply packet */
 
 			/* Create ping reply packet */
-			new_packet = (struct packet *) 
+			new_packet = (struct packet *)
 				malloc(sizeof(struct packet));
 			new_packet->dst = new_job->packet->src;
 			new_packet->src = (char) host_id;
@@ -501,10 +518,11 @@ while(1) {
 			break;
 
 		case JOB_PING_WAIT_FOR_REPLY:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "ping wait");
 			/* Wait for a ping reply packet */
 
 			if (ping_reply_received == 1) {
-				n = sprintf(man_reply_msg, "Ping acked!"); 
+				n = sprintf(man_reply_msg, "Ping acked!");
 				man_reply_msg[n] = '\0';
 				write(man_port->send_fd, man_reply_msg, n+1);
 				free(new_job);
@@ -514,48 +532,49 @@ while(1) {
 				job_q_add(&job_q, new_job);
 			}
 			else { /* Time out */
-				n = sprintf(man_reply_msg, "Ping time out!"); 
+				n = sprintf(man_reply_msg, "Ping time out!");
 				man_reply_msg[n] = '\0';
 				write(man_port->send_fd, man_reply_msg, n+1);
 				free(new_job);
 			}
 
-			break;	
+			break;
 
 
 		/* The next three jobs deal with uploading a file */
 
 			/* This job is for the sending host */
 		case JOB_FILE_UPLOAD_SEND:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "upload send");
 
 			/* Open file */
 			if (dir_valid == 1) {
-				n = sprintf(name, "./%s/%s", 
+				n = sprintf(name, "./%s/%s",
 					dir, new_job->fname_upload);
 				name[n] = '\0';
 				fp = fopen(name, "r");
 				if (fp != NULL) {
 
-				        /* 
+				        /*
 					 * Create first packet which
-					 * has the file name 
+					 * has the file name
 					 */
-					new_packet = (struct packet *) 
+					new_packet = (struct packet *)
 						malloc(sizeof(struct packet));
-					new_packet->dst 
+					new_packet->dst
 						= new_job->file_upload_dst;
 					new_packet->src = (char) host_id;
-					new_packet->type 
+					new_packet->type
 						= PKT_FILE_UPLOAD_START;
-					for (i=0; 
-						new_job->fname_upload[i]!= '\0'; 
+					for (i=0;
+						new_job->fname_upload[i]!= '\0';
 						i++) {
-						new_packet->payload[i] = 
+						new_packet->payload[i] =
 							new_job->fname_upload[i];
 					}
 					new_packet->length = i;
 
-					/* 
+					/*
 					 * Create a job to send the packet
 					 * and put it in the job queue
 					 */
@@ -565,32 +584,28 @@ while(1) {
 					new_job2->packet = new_packet;
 					job_q_add(&job_q, new_job2);
 
-					fseek(fp, 0, SEEK_END);						//Jump to EOF
-					int fileSize_byte = ftell(fp);				//Return byte size from byte 0 to EOF
-					fseek(fp, 0, SEEK_SET); 					// Reset fp to top of file
-
-					/* 
+					/*
 					 * Create the second packet which
 					 * has the file contents
 					 */
-					new_packet = (struct packet *) 
+					new_packet = (struct packet *)
 						malloc(sizeof(struct packet));
-					new_packet->dst 
+					new_packet->dst
 						= new_job->file_upload_dst;
 					new_packet->src = (char) host_id;
-					new_packet->type = PKT_FILE_UPLOAD_CONTINUE;
+					new_packet->type = PKT_FILE_UPLOAD_END;
+
 
 					n = fread(string,sizeof(char),
 						PKT_PAYLOAD_MAX, fp);
-					//fclose(fp);
+					fclose(fp);
 					string[n] = '\0';
 
 					for (i=0; i<n; i++) {
-						new_packet->payload[i] 
+						new_packet->payload[i]
 							= string[i];
 					}
-					//printf("DEBUG: string sent %s\n", string);
-					//printf("DEBUG: filesize = %d\n", fileSize_byte);
+
 					new_packet->length = n;
 
 					/*
@@ -600,54 +615,14 @@ while(1) {
 
 					new_job2 = (struct host_job *)
 						malloc(sizeof(struct host_job));
-					new_job2->type 
+					new_job2->type
 						= JOB_SEND_PKT_ALL_PORTS;
 					new_job2->packet = new_packet;
 					job_q_add(&job_q, new_job2);
 
-					//If file size is larger than 100, append more
-					fileSize_byte -= PKT_PAYLOAD_MAX;
-
-					while (fileSize_byte > 0) {
-				
-						new_packet = (struct packet *) 
-							malloc(sizeof(struct packet));
-						new_packet->dst 
-							= new_job->file_upload_dst;
-						new_packet->src = (char) host_id;
-						new_packet->type = PKT_FILE_UPLOAD_END;
-
-						n = fread(string,sizeof(char),
-							PKT_PAYLOAD_MAX, fp);
-					//	fclose(fp);
-						string[n] = '\0';
-
-						for (i=0; i<n; i++) {
-							new_packet->payload[i] 
-								= string[i];
-						}
-						//printf("DEBUG: SETPT1\n");
-						//printf("DEBUG: string sent %s , n =%d", string,n);
-						new_packet->length = n;
-
-						/*
-						* Create a job to send the packet
-						* and put the job in the job queue
-						*/
-
-						new_job2 = (struct host_job *)
-							malloc(sizeof(struct host_job));
-						new_job2->type 
-							= JOB_SEND_PKT_ALL_PORTS;
-						new_job2->packet = new_packet;
-						job_q_add(&job_q, new_job2);
-
-						fileSize_byte -= PKT_PAYLOAD_MAX;
-					}
-					fclose(fp);
 					free(new_job);
 				}
-				else {  
+				else {
 					/* Didn't open file */
 				}
 			}
@@ -656,25 +631,31 @@ while(1) {
 			/* The next two jobs are for the receving host */
 
 		case JOB_FILE_UPLOAD_RECV_START:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "upload get start");
 
 			/* Initialize the file buffer data structure */
 			file_buf_init(&f_buf_upload);
 
-			/* 
+			/*
 			 * Transfer the file name in the packet payload
 			 * to the file buffer data structure
 			 */
-			file_buf_put_name(&f_buf_upload, 
-				new_job->packet->payload, 
+			file_buf_put_name(&f_buf_upload,
+				new_job->packet->payload,
 				new_job->packet->length);
 
 			free(new_job->packet);
 			free(new_job);
 			break;
 
-		case JOB_FILE_UPLOAD_CONTINUE:
+		case JOB_FILE_UPLOAD_RECV_END:
+			//printf("\th%d: doing job \"%s\"\n", host_id, "upload get end");
 
-			file_buf_add(&f_buf_upload, 
+			/*
+			 * Download packet payload into file buffer
+			 * data structure
+			 */
+			file_buf_add(&f_buf_upload,
 				new_job->packet->payload,
 				new_job->packet->length);
 
@@ -683,8 +664,8 @@ while(1) {
 
 			if (dir_valid == 1) {
 
-				/* 
-				 * Get file name from the file buffer 
+				/*
+				 * Get file name from the file buffer
 				 * Then open the file
 				 */
 				file_buf_get_name(&f_buf_upload, string);
@@ -693,81 +674,36 @@ while(1) {
 				fp = fopen(name, "w");
 
 				if (fp != NULL) {
-					/* 
+					/*
 					 * Write contents in the file
 					 * buffer into file
 					 */
 
 					while (f_buf_upload.occ > 0) {
 						n = file_buf_remove(
-							&f_buf_upload, 
+							&f_buf_upload,
 							string,
 							PKT_PAYLOAD_MAX);
 						string[n] = '\0';
 						n = fwrite(string,
 							sizeof(char),
-							n, 
+							n,
 							fp);
 					}
 
 					fclose(fp);
-				}	
+				}
 			}
 
 			break;
+		default:
 
-
-		case JOB_FILE_UPLOAD_RECV_END:
-
-			/* 
-			 * Download packet payload into file buffer 
-			 * data structure 
-			 */
-			file_buf_add(&f_buf_upload, 
-				new_job->packet->payload,
-				new_job->packet->length);
-
-			free(new_job->packet);
-			free(new_job);
-
-			if (dir_valid == 1) {
-
-				/* 
-				 * Get file name from the file buffer 
-				 * Then open the file
-				 */
-				file_buf_get_name(&f_buf_upload, string);
-				n = sprintf(name, "./%s/%s", dir, string);
-				name[n] = '\0';
-				fp = fopen(name, "a");
-
-				if (fp != NULL) {
-					/* 
-					 * Write contents in the file
-					 * buffer into file
-					 */
-
-					while (f_buf_upload.occ > 0) {
-						n = file_buf_remove(
-							&f_buf_upload, 
-							string,
-							PKT_PAYLOAD_MAX);
-						string[n] = '\0';
-						n = fwrite(string,
-							sizeof(char),
-							n, 
-							fp);
-					}
-
-					fclose(fp);
-				}	
-			}
-
+			//printf("\th%d: doing job \"%s\"\n", host_id, "unknown");
 			break;
 		}
 
+		//printf("\th%d: switch out \n", host_id);
 	}
-
 
 	/* The host goes to sleep for 10 ms */
 	usleep(TENMILLISEC);
